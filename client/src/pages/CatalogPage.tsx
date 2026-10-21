@@ -121,7 +121,7 @@ export const CatalogPage: React.FC = () => {
             Explore Product Catalog
           </h1>
           <p className="text-slate-400 text-sm mt-1">
-            Real-time server-side inventory with optimistic locking protection.
+            Real time server side inventory with optimistic locking protection.
           </p>
         </div>
       </div>
