@@ -122,8 +122,9 @@ public class ConcurrencyIntegrationTests : IClassFixture<CustomWebApplicationFac
         var body1 = await responses[0].Content.ReadAsStringAsync();
         var body2 = await responses[1].Content.ReadAsStringAsync();
 
-        Assert.True(statusCodes.Contains(HttpStatusCode.Created), $"Expected 201. Responses: [{statusCodes[0]}: {body1}], [{statusCodes[1]}: {body2}]");
-        Assert.Contains(HttpStatusCode.Conflict, statusCodes);
+        // Assert: Exactly one request receives 201 Created, and exactly one receives 409 Conflict
+        Assert.Single(statusCodes, HttpStatusCode.Created);
+        Assert.Single(statusCodes, HttpStatusCode.Conflict);
 
         // Verify remaining stock in database is exactly 0 (never negative)
         using var verifyScope = _factory.Services.CreateScope();

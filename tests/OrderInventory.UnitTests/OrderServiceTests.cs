@@ -64,7 +64,7 @@ public class OrderServiceTests
 
         // Act & Assert
         var ex = await Assert.ThrowsAsync<ConflictException>(() =>
-            orderService.CreateOrderAsync(1, request, null));
+            orderService.CreateOrderAsync(1, request, "TEST-KEY-FAIL-STOCK"));
 
         Assert.Contains("Insufficient stock", ex.Message);
 
@@ -92,7 +92,7 @@ public class OrderServiceTests
         };
 
         // Act
-        var result = await orderService.CreateOrderAsync(1, request, null);
+        var result = await orderService.CreateOrderAsync(1, request, "TEST-KEY-SUCCEED-STOCK");
 
         // Assert
         Assert.NotNull(result);
@@ -121,7 +121,7 @@ public class OrderServiceTests
 
         // Act & Assert
         await Assert.ThrowsAsync<ConflictException>(() =>
-            orderService.CreateOrderAsync(1, request, null));
+            orderService.CreateOrderAsync(1, request, "TEST-KEY-MULTI-FAIL"));
 
         // Product 1 stock must NOT have changed
         var prod1 = await context.Products.FindAsync(1);
