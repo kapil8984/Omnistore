@@ -44,4 +44,17 @@ public class AuthController : ControllerBase
         var response = await _authService.RefreshTokenAsync(request);
         return Ok(response);
     }
+
+    [HttpPost("revoke")]
+    [Microsoft.AspNetCore.Authorization.Authorize]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    public async Task<IActionResult> Revoke([FromServices] ICurrentUserService currentUserService, CancellationToken cancellationToken)
+    {
+        if (currentUserService.UserId.HasValue)
+        {
+            await _authService.RevokeRefreshTokenAsync(currentUserService.UserId.Value, cancellationToken);
+        }
+        return NoContent();
+    }
 }

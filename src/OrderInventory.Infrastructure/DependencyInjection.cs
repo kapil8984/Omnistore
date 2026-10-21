@@ -37,10 +37,13 @@ public static class DependencyInjection
         services.AddScoped<IAuthService, AuthService>();
 
         // JWT Authentication Setup
-        var jwtSettings = configuration.GetSection("Jwt");
-        var secret = jwtSettings["Secret"] ?? "SuperSecretKeyForOrderInventorySystem123456789!#@$";
-        var issuer = jwtSettings["Issuer"] ?? "OrderInventoryApi";
-        var audience = jwtSettings["Audience"] ?? "OrderInventoryClient";
+        var secret = configuration["JWT_SECRET"]
+            ?? configuration["Jwt:Key"]
+            ?? configuration["Jwt:Secret"]
+            ?? Environment.GetEnvironmentVariable("JWT_SECRET")
+            ?? "DevOnlySafeSecretKeyForLocalTesting_MustBeAtLeast32Bytes!";
+        var issuer = configuration["JWT_ISSUER"] ?? configuration["Jwt:Issuer"] ?? "OrderInventoryApi";
+        var audience = configuration["JWT_AUDIENCE"] ?? configuration["Jwt:Audience"] ?? "OrderInventoryClient";
 
         services.AddAuthentication(options =>
         {

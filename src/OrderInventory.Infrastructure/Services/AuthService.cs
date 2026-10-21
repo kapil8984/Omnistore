@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using OrderInventory.Application.DTOs.Auth;
 using OrderInventory.Application.Interfaces;
 using OrderInventory.Domain.Entities;
+using OrderInventory.Domain.Enums;
 using OrderInventory.Domain.Exceptions;
 using OrderInventory.Infrastructure.Security;
 
@@ -42,7 +43,7 @@ public class AuthService : IAuthService
             FullName = request.FullName.Trim(),
             Email = normalizedEmail,
             PasswordHash = _passwordHasher.HashPassword(request.Password),
-            Role = request.Role
+            Role = Role.Customer // Security: Public registration must always create a Customer account
         };
 
         var refreshToken = _tokenService.GenerateRefreshToken();
@@ -148,5 +149,16 @@ public class AuthService : IAuthService
                 Role = user.Role
             }
         };
+    }
+
+    public async Task RevokeRefreshTokenAsync(int userId, CancellationToken cancellationToken = default)
+    {
+        var user = await _context.Users.FindAsync(new object[] { userId }, cancellationToken);
+        if (user != null)
+        {
+            user.RefreshToken = null;
+            user.RefreshTokenExpiryTime = null;
+            await _context.SaveChangesAsync(cancellationToken);
+        }
     }
 }

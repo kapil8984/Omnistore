@@ -20,11 +20,14 @@ public class TokenService : ITokenService
 
     public string GenerateAccessToken(User user)
     {
-        var jwtSettings = _configuration.GetSection("Jwt");
-        var secret = jwtSettings["Secret"] ?? "SuperSecretKeyForOrderInventorySystem123456789!#@$";
-        var issuer = jwtSettings["Issuer"] ?? "OrderInventoryApi";
-        var audience = jwtSettings["Audience"] ?? "OrderInventoryClient";
-        var expiryMinutes = double.TryParse(jwtSettings["ExpiryMinutes"], out var mins) ? mins : 60;
+        var secret = _configuration["JWT_SECRET"]
+            ?? _configuration["Jwt:Key"]
+            ?? _configuration["Jwt:Secret"]
+            ?? Environment.GetEnvironmentVariable("JWT_SECRET")
+            ?? "DevOnlySafeSecretKeyForLocalTesting_MustBeAtLeast32Bytes!";
+        var issuer = _configuration["JWT_ISSUER"] ?? _configuration["Jwt:Issuer"] ?? "OrderInventoryApi";
+        var audience = _configuration["JWT_AUDIENCE"] ?? _configuration["Jwt:Audience"] ?? "OrderInventoryClient";
+        var expiryMinutes = double.TryParse(_configuration["Jwt:ExpiryMinutes"], out var mins) ? mins : 60;
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -62,8 +65,11 @@ public class TokenService : ITokenService
 
     public ClaimsPrincipal? GetPrincipalFromExpiredToken(string token)
     {
-        var jwtSettings = _configuration.GetSection("Jwt");
-        var secret = jwtSettings["Secret"] ?? "SuperSecretKeyForOrderInventorySystem123456789!#@$";
+        var secret = _configuration["JWT_SECRET"]
+            ?? _configuration["Jwt:Key"]
+            ?? _configuration["Jwt:Secret"]
+            ?? Environment.GetEnvironmentVariable("JWT_SECRET")
+            ?? "DevOnlySafeSecretKeyForLocalTesting_MustBeAtLeast32Bytes!";
 
         var tokenValidationParameters = new TokenValidationParameters
         {
