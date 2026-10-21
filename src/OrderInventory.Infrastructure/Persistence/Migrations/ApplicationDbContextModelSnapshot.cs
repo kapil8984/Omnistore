@@ -24,17 +24,32 @@ namespace OrderInventory.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("OrderInventory.Domain.Entities.IdempotencyRecord", b =>
                 {
-                    b.Property<string>("Key")
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)");
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2")
                         .HasDefaultValueSql("GETUTCDATE()");
 
+                    b.Property<int>("CustomerId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
                     b.Property<int>("OrderId")
                         .HasColumnType("int");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
 
                     b.Property<string>("ResponseBody")
                         .IsRequired()
@@ -43,7 +58,10 @@ namespace OrderInventory.Infrastructure.Persistence.Migrations
                     b.Property<int>("StatusCode")
                         .HasColumnType("int");
 
-                    b.HasKey("Key");
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId", "Key")
+                        .IsUnique();
 
                     b.ToTable("IdempotencyRecords");
                 });
@@ -67,6 +85,12 @@ namespace OrderInventory.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("Discount")
                         .HasPrecision(18, 2)
                         .HasColumnType("decimal(18,2)");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("rowversion");
 
                     b.Property<string>("Status")
                         .IsRequired()

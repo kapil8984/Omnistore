@@ -83,6 +83,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             builder.Property(o => o.Discount).HasPrecision(18, 2);
             builder.Property(o => o.Total).HasPrecision(18, 2);
             builder.Property(o => o.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
+            builder.Property(o => o.RowVersion).IsRowVersion();
 
             builder.HasOne(o => o.Customer)
                 .WithMany(u => u.Orders)
@@ -111,8 +112,10 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
         // IdempotencyRecord Configuration
         modelBuilder.Entity<IdempotencyRecord>(builder =>
         {
-            builder.HasKey(r => r.Key);
-            builder.Property(r => r.Key).HasMaxLength(128);
+            builder.HasKey(r => r.Id);
+            builder.Property(r => r.Key).IsRequired().HasMaxLength(128);
+            builder.Property(r => r.RequestHash).IsRequired().HasMaxLength(64);
+            builder.HasIndex(r => new { r.CustomerId, r.Key }).IsUnique();
             builder.Property(r => r.CreatedAt).HasDefaultValueSql("GETUTCDATE()");
         });
 

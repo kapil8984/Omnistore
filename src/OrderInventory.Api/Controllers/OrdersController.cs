@@ -67,6 +67,21 @@ public class OrdersController : ControllerBase
         return Ok(result);
     }
 
+    [HttpGet]
+    [Authorize(Roles = "Admin")]
+    [ProducesResponseType(typeof(PagedResult<OrderDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> GetAllOrders(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        [FromQuery] OrderInventory.Domain.Enums.OrderStatus? status = null,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _orderService.GetAllOrdersAsync(page, pageSize, status, cancellationToken);
+        return Ok(result);
+    }
+
     [HttpGet("{id:int}")]
     [ProducesResponseType(typeof(OrderDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status401Unauthorized)]

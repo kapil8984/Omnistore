@@ -1,11 +1,5 @@
--- ============================================================================
--- ORDER & INVENTORY SYSTEM - SQL SERVER QUERIES (PART B)
--- Schema: Users, Products, Orders, OrderItems, IdempotencyRecords, OutboxMessages
--- ============================================================================
-
--- ----------------------------------------------------------------------------
 -- 1. Top 5 customers by total spend (Confirmed + Shipped orders) in the last 30 days
--- ----------------------------------------------------------------------------
+
 SELECT TOP (5)
     u.Id AS CustomerId,
     u.FullName AS CustomerName,
@@ -21,9 +15,8 @@ GROUP BY u.Id, u.FullName, u.Email
 ORDER BY TotalSpend DESC;
 
 
--- ----------------------------------------------------------------------------
 -- 2. Products that have never been ordered
--- ----------------------------------------------------------------------------
+
 SELECT 
     p.Id AS ProductId,
     p.Sku,
@@ -39,9 +32,8 @@ WHERE NOT EXISTS (
 );
 
 
--- ----------------------------------------------------------------------------
 -- 3. Monthly revenue for the current year, with a running total column (window function)
--- ----------------------------------------------------------------------------
+
 WITH MonthlySales AS (
     SELECT 
         MONTH(o.CreatedAt) AS [MonthNumber],
@@ -63,11 +55,10 @@ SELECT
 FROM MonthlySales
 ORDER BY MonthNumber;
 
-
--- ----------------------------------------------------------------------------
 -- 4. Each customer's second-highest order total
---    (Customers with fewer than 2 orders should not appear)
--- ----------------------------------------------------------------------------
+--    (Uses DENSE_RANK to ensure the second-highest DISTINCT order total is returned.
+--     Customers with fewer than 2 orders or without a distinct 2nd-highest total are excluded.)
+
 WITH RankedOrders AS (
     SELECT 
         o.CustomerId,
@@ -75,15 +66,16 @@ WITH RankedOrders AS (
         o.Id AS OrderId,
         o.Total,
         o.CreatedAt,
-        ROW_NUMBER() OVER (
+        DENSE_RANK() OVER (
             PARTITION BY o.CustomerId 
-            ORDER BY o.Total DESC, o.Id DESC
+            ORDER BY o.Total DESC
         ) AS OrderRank,
         COUNT(o.Id) OVER (
             PARTITION BY o.CustomerId
         ) AS TotalCustomerOrders
     FROM Orders o
     INNER JOIN Users u ON o.CustomerId = u.Id
+    WHERE o.Status IN ('Confirmed', 'Shipped')
 )
 SELECT 
     CustomerId,
@@ -96,9 +88,8 @@ WHERE OrderRank = 2
   AND TotalCustomerOrders >= 2;
 
 
--- ----------------------------------------------------------------------------
 -- 5. Products whose stock is below the average quantity sold per order of that product
--- ----------------------------------------------------------------------------
+
 WITH ProductSalesAvg AS (
     SELECT 
         oi.ProductId,

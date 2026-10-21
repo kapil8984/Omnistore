@@ -6,6 +6,8 @@ using OrderInventory.Application.Interfaces;
 using OrderInventory.Domain.Entities;
 using OrderInventory.Domain.Exceptions;
 
+using Microsoft.Extensions.Primitives;
+
 namespace OrderInventory.Application.Services;
 
 public class ProductService : IProductService
@@ -14,8 +16,18 @@ public class ProductService : IProductService
     private readonly IMemoryCache _cache;
     private readonly ILogger<ProductService> _logger;
     private const string ProductsCacheKeyPrefix = "products_query_";
-    private static readonly HashSet<string> ActiveCacheKeys = new();
-    private static readonly object CacheLock = new();
+    private static CancellationTokenSource _cacheTokenSource = new();
+
+    public static void InvalidateProductCache()
+    {
+        var old = Interlocked.Exchange(ref _cacheTokenSource, new CancellationTokenSource());
+        try
+        {
+            old.Cancel();
+            old.Dispose();
+        }
+        catch (ObjectDisposedException) { }
+    }
 
     public ProductService(
         IApplicationDbContext context,
@@ -102,11 +114,7 @@ public class ProductService : IProductService
             AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10),
             SlidingExpiration = TimeSpan.FromMinutes(2)
         };
-
-        lock (CacheLock)
-        {
-            ActiveCacheKeys.Add(cacheKey);
-        }
+        cacheEntryOptions.AddExpirationToken(new CancellationChangeToken(_cacheTokenSource.Token));
 
         _cache.Set(cacheKey, result, cacheEntryOptions);
         return result;
@@ -221,13 +229,6 @@ public class ProductService : IProductService
 
     private void InvalidateCache()
     {
-        lock (CacheLock)
-        {
-            foreach (var key in ActiveCacheKeys)
-            {
-                _cache.Remove(key);
-            }
-            ActiveCacheKeys.Clear();
-        }
+        InvalidateProductCache();
     }
 }

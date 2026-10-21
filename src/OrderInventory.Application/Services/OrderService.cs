@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -29,6 +31,18 @@ public class OrderService : IOrderService
         _logger = logger;
     }
 
+    public static string ComputeRequestHash(CreateOrderDto dto)
+    {
+        var normalized = (dto.Items ?? Enumerable.Empty<CreateOrderItemDto>())
+            .GroupBy(i => i.ProductId)
+            .OrderBy(g => g.Key)
+            .Select(g => $"{g.Key}:{g.Sum(x => x.Quantity)}");
+        var raw = string.Join(";", normalized);
+        using var sha256 = SHA256.Create();
+        var bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(raw));
+        return Convert.ToHexString(bytes);
+    }
+
     public async Task<OrderDto> CreateOrderAsync(int customerId, CreateOrderDto dto, string? idempotencyKey, CancellationToken cancellationToken = default)
     {
         if (dto.Items == null || !dto.Items.Any())
@@ -36,31 +50,44 @@ public class OrderService : IOrderService
             throw new BadRequestException("An order must contain at least one item.");
         }
 
-        // Rule 3: Idempotency Check
-        if (!string.IsNullOrWhiteSpace(idempotencyKey))
+        // Rule 3: Idempotency-Key is mandatory
+        if (string.IsNullOrWhiteSpace(idempotencyKey))
         {
-            var existingRecord = await _context.IdempotencyRecords
-                .AsNoTracking()
-                .FirstOrDefaultAsync(r => r.Key == idempotencyKey, cancellationToken);
+            throw new BadRequestException("The 'Idempotency-Key' header is mandatory for order creation.");
+        }
 
-            if (existingRecord != null)
+        var trimmedKey = idempotencyKey.Trim();
+        var currentHash = ComputeRequestHash(dto);
+
+        // Check if this customer already submitted with this key
+        var existingRecord = await _context.IdempotencyRecords
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.CustomerId == customerId && r.Key == trimmedKey, cancellationToken);
+
+        if (existingRecord != null)
+        {
+            // Fingerprint check: Reusing same key with DIFFERENT payload must return 409 Conflict
+            if (existingRecord.RequestHash != currentHash)
             {
-                _logger.LogInformation("Idempotent request detected with key {Key}. Returning existing order {OrderId}.", idempotencyKey, existingRecord.OrderId);
-                try
-                {
-                    var existingDto = JsonSerializer.Deserialize<OrderDto>(existingRecord.ResponseBody);
-                    if (existingDto != null)
-                    {
-                        return existingDto;
-                    }
-                }
-                catch (JsonException)
-                {
-                    // Fallback to loading order from DB
-                }
-
-                return await GetOrderDtoInternalAsync(existingRecord.OrderId, cancellationToken);
+                _logger.LogWarning("Idempotency key {Key} reused with mismatched payload by Customer {CustomerId}", trimmedKey, customerId);
+                throw new ConflictException("The provided Idempotency-Key was previously used with a different request payload.");
             }
+
+            _logger.LogInformation("Idempotent request detected with key {Key}. Returning existing order {OrderId}.", trimmedKey, existingRecord.OrderId);
+            try
+            {
+                var existingDto = JsonSerializer.Deserialize<OrderDto>(existingRecord.ResponseBody);
+                if (existingDto != null)
+                {
+                    return existingDto;
+                }
+            }
+            catch (JsonException)
+            {
+                // Fallback to loading order from DB
+            }
+
+            return await GetOrderDtoInternalAsync(existingRecord.OrderId, cancellationToken);
         }
 
         // Validate customer
@@ -164,7 +191,10 @@ public class OrderService : IOrderService
 
                 _context.Orders.Add(order);
 
-                // Outbox pattern for OrderPlaced notification
+                // Save order and product stock updates FIRST so database generates order.Id
+                await _context.SaveChangesAsync(cancellationToken);
+
+                // Outbox pattern for OrderPlaced notification with actual generated non-zero OrderId
                 var outboxMessage = new OutboxMessage
                 {
                     Id = Guid.NewGuid(),
@@ -179,9 +209,6 @@ public class OrderService : IOrderService
                     CreatedAt = DateTime.UtcNow
                 };
                 _context.OutboxMessages.Add(outboxMessage);
-
-                // Save order and product stock updates
-                await _context.SaveChangesAsync(cancellationToken);
 
                 var orderDto = new OrderDto
                 {
@@ -209,22 +236,24 @@ public class OrderService : IOrderService
                     }).ToList()
                 };
 
-                // Rule 3: Record Idempotency Key
-                if (!string.IsNullOrWhiteSpace(idempotencyKey))
+                // Rule 3: Record Idempotency Key scoped to customer and fingerprint hash
+                var record = new IdempotencyRecord
                 {
-                    var record = new IdempotencyRecord
-                    {
-                        Key = idempotencyKey,
-                        OrderId = order.Id,
-                        StatusCode = 201,
-                        ResponseBody = JsonSerializer.Serialize(orderDto),
-                        CreatedAt = DateTime.UtcNow
-                    };
-                    _context.IdempotencyRecords.Add(record);
-                    await _context.SaveChangesAsync(cancellationToken);
-                }
+                    CustomerId = customerId,
+                    Key = trimmedKey,
+                    RequestHash = currentHash,
+                    OrderId = order.Id,
+                    StatusCode = 201,
+                    ResponseBody = JsonSerializer.Serialize(orderDto),
+                    CreatedAt = DateTime.UtcNow
+                };
+                _context.IdempotencyRecords.Add(record);
 
+                await _context.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
+
+                // Invalidate product cache so catalog reflects decremented stock immediately
+                ProductService.InvalidateProductCache();
 
                 _logger.LogInformation("Order {OrderId} created successfully for customer {CustomerId}. Total: {Total}", order.Id, customerId, order.Total);
 
@@ -239,6 +268,35 @@ public class OrderService : IOrderService
                 _logger.LogWarning(ex, "Concurrency conflict detected while placing order for customer {CustomerId}.", customerId);
                 // Rule 2: Optimistic concurrency conflict must return HTTP 409
                 throw new ConflictException("Another customer purchased this item concurrently. Please refresh inventory and try again.");
+            }
+            catch (DbUpdateException ex)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+
+                // Handle simultaneous duplicate requests with the same Idempotency-Key
+                var existing = await _context.IdempotencyRecords
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(r => r.CustomerId == customerId && r.Key == trimmedKey, cancellationToken);
+
+                if (existing != null)
+                {
+                    if (existing.RequestHash != currentHash)
+                    {
+                        throw new ConflictException("The provided Idempotency-Key was previously used with a different request payload.");
+                    }
+
+                    try
+                    {
+                        var existingDto = JsonSerializer.Deserialize<OrderDto>(existing.ResponseBody);
+                        if (existingDto != null) return existingDto;
+                    }
+                    catch (JsonException) { }
+
+                    return await GetOrderDtoInternalAsync(existing.OrderId, cancellationToken);
+                }
+
+                _logger.LogError(ex, "DbUpdateException occurred while creating order for customer {CustomerId}.", customerId);
+                throw;
             }
             catch (Exception ex)
             {
@@ -261,6 +319,43 @@ public class OrderService : IOrderService
                 .ThenInclude(oi => oi.Product)
             .Where(o => o.CustomerId == customerId)
             .OrderByDescending(o => o.CreatedAt);
+
+        int totalCount = await query.CountAsync(cancellationToken);
+
+        var orders = await query
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        var dtos = orders.Select(MapToOrderDto).ToList();
+
+        return new PagedResult<OrderDto>
+        {
+            Items = dtos,
+            TotalCount = totalCount,
+            Page = page,
+            PageSize = pageSize
+        };
+    }
+
+    public async Task<PagedResult<OrderDto>> GetAllOrdersAsync(int page, int pageSize, OrderStatus? status = null, CancellationToken cancellationToken = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 50);
+
+        var query = _context.Orders
+            .AsNoTracking()
+            .Include(o => o.Customer)
+            .Include(o => o.OrderItems)
+                .ThenInclude(oi => oi.Product)
+            .AsQueryable();
+
+        if (status.HasValue)
+        {
+            query = query.Where(o => o.Status == status.Value);
+        }
+
+        query = query.OrderByDescending(o => o.CreatedAt);
 
         int totalCount = await query.CountAsync(cancellationToken);
 
@@ -341,7 +436,7 @@ public class OrderService : IOrderService
                 // Shipped and Cancelled are final.
                 ValidateStatusTransition(order.Status, newStatus);
 
-                // Rule 4: Cancelling restores stock
+                // Rule 4: Cancelling restores stock exactly once
                 if (newStatus == OrderStatus.Cancelled && order.Status != OrderStatus.Cancelled)
                 {
                     foreach (var item in order.OrderItems)
@@ -351,6 +446,7 @@ public class OrderService : IOrderService
                             item.Product.StockQuantity += item.Quantity;
                         }
                     }
+                    ProductService.InvalidateProductCache();
                     _logger.LogInformation("Stock restored for cancelled order {OrderId}.", order.Id);
                 }
 
@@ -384,33 +480,46 @@ public class OrderService : IOrderService
         // Rule 6: Automatically cancel orders that stay Pending for more than 30 minutes and restore their stock
         var expirationThreshold = DateTime.UtcNow.AddMinutes(-30);
 
-        var expiredOrders = await _context.Orders
-            .Include(o => o.OrderItems)
-                .ThenInclude(oi => oi.Product)
+        var expiredOrderIds = await _context.Orders
             .Where(o => o.Status == OrderStatus.Pending && o.CreatedAt <= expirationThreshold)
+            .Select(o => o.Id)
             .ToListAsync(cancellationToken);
 
-        if (!expiredOrders.Any())
+        if (!expiredOrderIds.Any())
         {
             return;
         }
 
-        _logger.LogInformation("Found {Count} expired Pending orders to cancel.", expiredOrders.Count);
+        _logger.LogInformation("Found {Count} expired Pending orders to cancel.", expiredOrderIds.Count);
 
         var strategy = _context.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
-            foreach (var order in expiredOrders)
+            bool stockRestoredAny = false;
+
+            foreach (var orderId in expiredOrderIds)
             {
                 using var transaction = await _context.BeginTransactionAsync(cancellationToken);
                 try
                 {
+                    // Reload inside transaction to ensure order is still Pending
+                    var order = await _context.Orders
+                        .Include(o => o.OrderItems)
+                            .ThenInclude(oi => oi.Product)
+                        .FirstOrDefaultAsync(o => o.Id == orderId && o.Status == OrderStatus.Pending, cancellationToken);
+
+                    if (order == null)
+                    {
+                        continue; // Status was already changed concurrently by customer or admin
+                    }
+
                     order.Status = OrderStatus.Cancelled;
                     foreach (var item in order.OrderItems)
                     {
                         if (item.Product != null)
                         {
                             item.Product.StockQuantity += item.Quantity;
+                            stockRestoredAny = true;
                         }
                     }
 
@@ -421,11 +530,21 @@ public class OrderService : IOrderService
 
                     _ = _notificationService.NotifyOrderStatusChangedAsync(order.Id, order.Status, order.CustomerId);
                 }
+                catch (DbUpdateConcurrencyException)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    _logger.LogWarning("Concurrency conflict while auto-cancelling expired order {OrderId}; skipped.", orderId);
+                }
                 catch (Exception ex)
                 {
                     await transaction.RollbackAsync(cancellationToken);
-                    _logger.LogError(ex, "Failed to cancel expired order {OrderId}", order.Id);
+                    _logger.LogError(ex, "Failed to cancel expired order {OrderId}", orderId);
                 }
+            }
+
+            if (stockRestoredAny)
+            {
+                ProductService.InvalidateProductCache();
             }
         });
     }

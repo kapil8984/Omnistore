@@ -13,5 +13,7 @@ public class Order
     public decimal Total { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    public byte[] RowVersion { get; set; } = Array.Empty<byte>();
+
     public ICollection<OrderItem> OrderItems { get; set; } = new List<OrderItem>();
 }
