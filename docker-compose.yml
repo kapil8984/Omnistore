@@ -1,0 +1,54 @@
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: omnistore-sqlserver
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=Password123!
+      - MSSQL_PID=Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver-data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'Password123!' -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: src/OrderInventory.Api/Dockerfile
+    container_name: omnistore-api
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=Server=sqlserver,1433;Database=OrderInventoryDb;User Id=sa;Password=Password123!;TrustServerCertificate=True;MultipleActiveResultSets=true;
+      - Jwt__Key=OmniStore_Super_Secret_Jwt_Key_For_Production_Grade_Testing_2026_Minimum_32_Bytes!
+      - Jwt__Issuer=OmniStoreApi
+      - Jwt__Audience=OmniStoreClient
+      - Jwt__AccessTokenExpirationMinutes=60
+      - Jwt__RefreshTokenExpirationDays=7
+      - Cors__AllowedOrigins=http://localhost;http://localhost:3000;http://localhost:5173
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: omnistore-client
+    depends_on:
+      - api
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+
+volumes:
+  sqlserver-data:
