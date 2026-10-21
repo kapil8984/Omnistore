@@ -47,7 +47,7 @@ public class OrderService : IOrderService
     {
         if (dto.Items == null || !dto.Items.Any())
         {
-            throw new BadRequestException("An order must contain at least one item.");
+            throw new BadRequestException("An order must contain at least one item to proceed with checkout.");
         }
 
         // Rule 3: Idempotency-Key is mandatory
