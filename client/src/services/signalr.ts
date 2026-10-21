@@ -1,6 +1,6 @@
 import * as signalR from '@microsoft/signalr';
 
-const HUB_URL = (import.meta as any).env?.VITE_HUB_URL || 'http://localhost:5000/hubs/orders';
+const HUB_URL = (import.meta as any).env?.VITE_HUB_URL || 'http://localhost:5069/hubs/orders';
 
 let connection: signalR.HubConnection | null = null;
 const statusListeners: Array<(orderId: number, newStatus: any) => void> = [];

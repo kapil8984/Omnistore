@@ -40,6 +40,10 @@ export const CatalogPage: React.FC = () => {
     }, 300);
   };
 
+  useEffect(() => {
+    setSearchInput(searchTerm);
+  }, [searchTerm]);
+
   // Helper to update query parameters in URL
   const updateQueryParam = (key: string, value: string | undefined, resetPage = false) => {
     const newParams = new URLSearchParams(searchParams);

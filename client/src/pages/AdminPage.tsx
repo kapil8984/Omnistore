@@ -86,7 +86,7 @@ const AdminPage: React.FC = () => {
   const loadOrders = useCallback(async () => {
     setOrdersLoading(true);
     try {
-      const res = await ordersApi.getMyOrders(ordersPage, 10);
+      const res = await ordersApi.getAllOrders(ordersPage, 10);
       setOrders(res.items);
       setOrdersTotalPages(res.totalPages);
     } catch (err: unknown) {

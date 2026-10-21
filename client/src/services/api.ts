@@ -12,7 +12,7 @@ import {
   OrderStatus
 } from '../types';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5069/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -111,6 +111,7 @@ api.interceptors.response.use(
         localStorage.setItem('accessToken', data.accessToken);
         localStorage.setItem('refreshToken', data.refreshToken);
         localStorage.setItem('user', JSON.stringify(data.user));
+        window.dispatchEvent(new Event('auth-changed'));
 
         api.defaults.headers.common['Authorization'] = `Bearer ${data.accessToken}`;
         if (originalRequest.headers) {
@@ -124,6 +125,7 @@ api.interceptors.response.use(
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
         localStorage.removeItem('user');
+        window.dispatchEvent(new Event('auth-changed'));
         window.location.href = '/login';
         return Promise.reject(refreshError);
       } finally {
@@ -143,8 +145,15 @@ export const authApi = {
     return res.data;
   },
   register: async (fullName: string, email: string, password: string): Promise<AuthResponse> => {
-    const res = await api.post<AuthResponse>('/auth/register', { fullName, email, password, role: 'Customer' });
+    const res = await api.post<AuthResponse>('/auth/register', { fullName, email, password });
     return res.data;
+  },
+  revoke: async (): Promise<void> => {
+    try {
+      await api.post('/auth/revoke');
+    } catch {
+      // Ignore network errors on logout revoke
+    }
   },
 };
 
@@ -179,6 +188,12 @@ export const ordersApi = {
   getMyOrders: async (page = 1, pageSize = 10): Promise<PagedResult<Order>> => {
     const res = await api.get<PagedResult<Order>>('/orders/my', {
       params: { page, pageSize },
+    });
+    return res.data;
+  },
+  getAllOrders: async (page = 1, pageSize = 10, status?: OrderStatus): Promise<PagedResult<Order>> => {
+    const res = await api.get<PagedResult<Order>>('/orders', {
+      params: { page, pageSize, status: status || undefined },
     });
     return res.data;
   },

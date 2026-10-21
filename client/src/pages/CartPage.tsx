@@ -14,6 +14,18 @@ const CartPage: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successOrder, setSuccessOrder] = useState<number | null>(null);
+  const [activeIdempotencyKey, setActiveIdempotencyKey] = useState<string | null>(null);
+
+  // Clear idempotency key if cart items change
+  const cartFingerprint = items.map((i) => `${i.product.id}:${i.quantity}`).join(';');
+  const prevFingerprintRef = React.useRef(cartFingerprint);
+
+  React.useEffect(() => {
+    if (prevFingerprintRef.current !== cartFingerprint) {
+      prevFingerprintRef.current = cartFingerprint;
+      setActiveIdempotencyKey(null);
+    }
+  }, [cartFingerprint]);
 
   const handleCheckout = async () => {
     if (!isAuthenticated) {
@@ -21,15 +33,20 @@ const CartPage: React.FC = () => {
       return;
     }
 
-    if (items.length === 0) return;
+    if (items.length === 0 || isSubmitting) return;
 
     setIsSubmitting(true);
     setErrorMessage(null);
 
-    // Generate unique Idempotency-Key (UUID v4)
-    const idempotencyKey = typeof crypto !== 'undefined' && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `key-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    // Reuse existing Idempotency-Key if retrying the same cart, or generate a new one
+    const keyToUse = activeIdempotencyKey ||
+      (typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `key-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`);
+
+    if (!activeIdempotencyKey) {
+      setActiveIdempotencyKey(keyToUse);
+    }
 
     try {
       const orderPayload = {
@@ -39,8 +56,9 @@ const CartPage: React.FC = () => {
         })),
       };
 
-      const order = await ordersApi.createOrder(orderPayload, idempotencyKey);
+      const order = await ordersApi.createOrder(orderPayload, keyToUse);
       setSuccessOrder(order.id);
+      setActiveIdempotencyKey(null);
       clearCart();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'An error occurred during checkout.';
