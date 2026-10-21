@@ -118,7 +118,7 @@ export const CatalogPage: React.FC = () => {
             Curated High-End Electronics & Gear
           </div>
           <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-            Explore Product Catalog
+            Browse Product Catalog
           </h1>
           <p className="text-slate-400 text-sm mt-1">
             Real time server side inventory with optimistic locking protection.
